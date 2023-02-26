@@ -1,0 +1,606 @@
+---
+title: "rothc_by_cell_data_analysis"
+output: html_document
+date: "2023-02-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+
+library(tidyverse)
+library(readxl)
+library(scales)
+library(patchwork)
+
+```
+
+```{r eval = F}
+
+# cell_ids_all <- read_excel("input_data/cell_gis_dat_filter_ag_gldas.xlsx")$cell_id
+# 
+# cell_ids_no_data1 <- scan("sim_data/filter_gcm_no_data/ccsm4_no_data_cell_ids.txt")
+# cell_ids_no_data2 <- scan("sim_data/filter_gcm_no_data/miroc-esm_no_data_cell_ids.txt")
+# cell_ids_no_data3 <- scan("sim_data/filter_gcm_no_data/mri-cgcm3_no_data_cell_ids.txt")
+# cell_ids_no_data4 <- scan("sim_data/filter_gcm_no_data/noresm1-m_no_data_cell_ids.txt")
+# 
+# cell_ids1 <- setdiff(cell_ids_all, cell_ids_no_data1)
+# cell_ids2 <- setdiff(cell_ids_all, cell_ids_no_data2)
+# cell_ids3 <- setdiff(cell_ids_all, cell_ids_no_data3)
+# cell_ids4 <- setdiff(cell_ids_all, cell_ids_no_data4)
+# 
+# check_diff <- setdiff(cell_ids1,cell_ids2) # check to make sure same cells missing for each gcm (TRUE)
+# 
+# write(cell_ids1, "sim_data/cell_ids_final.txt", ncolumns = 1)
+
+```
+
+```{r}
+
+lu_labs <- c("crops", "hay", "pasture")
+gcms <- c("ccsm4", "miroc-esm", "noresm1-m", "mri-cgcm3")
+
+lu_lab <- lu_labs[1]
+gcm <-  gcms[1]
+
+n_cells <- 17991 # all = 17991
+
+
+cell_ids <- scan("sim_data/cell_ids_final.txt")
+
+```
+
+
+```{r}
+
+if(file.exists(paste("output_data/sim_data_comb_", gcm, "_", lu_lab, "_", n_cells, "_cells.Rdata", sep = ""))) {
+  load(paste("output_data/sim_data_comb_", gcm, "_", lu_lab, "_", n_cells, "_cells.Rdata", sep = ""))
+} else {
+  for (cell_i in 1:n_cells) {
+    if (cell_i %% 100 == 0) { print(paste("Processing cell", cell_i, "of", n_cells))}
+    cell_id <- cell_ids[cell_i]
+    sim_data <- read_csv(paste("sim_data/sim_data_", gcm, "/sim_data_", gcm, "_", cell_id, ".csv", sep = ""), show_col_types = F) %>%
+      select(year, matches(lu_lab)) %>%
+      rename(DPM = 2, RPM = 3, BIO = 4, HUM = 5, IOM = 6) %>%
+      mutate(total_soc = DPM + RPM + BIO + HUM + IOM)
+    if (cell_i == 1) {
+      sim_data_comb <- sim_data %>% select(year) # initialize combined data tibble
+    } 
+    
+    sim_data_comb[[as.character(cell_id)]] <- sim_data$total_soc # add data for each cell
+  }
+  save(sim_data_comb, file = paste("output_data/sim_data_comb_", gcm, "_", lu_lab, "_", n_cells, "_cells.Rdata", sep = ""))
+}
+
+```
+
+
+
+
+```{r}
+
+sim_data_comb_pivot <- sim_data_comb %>% pivot_longer(!year, names_to = "cell_id", values_to = "total_soc")
+
+sim_data_comb_yrly <- sim_data_comb %>%
+  mutate(year = floor(year)) %>%
+  group_by(year) %>%
+  summarize_all(mean)
+  
+sim_data_comb_yrly_pivot <- sim_data_comb_yrly %>% pivot_longer(!year, names_to = "cell_id", values_to = "total_soc")
+
+
+```
+
+
+```{r eval = F}
+
+plot_data <- sim_data_comb_yrly_pivot
+
+plot_data %>% #filter(cell_id == "15782") %>%
+  ggplot(aes(x = year, y = total_soc)) +
+  geom_line(alpha = .1) +
+  theme_bw()
+
+```
+
+```{r}
+
+plot_data <- sim_data_comb_pivot %>%
+  group_by(year) %>%
+  summarize(mean = mean(total_soc),
+            sd = sd(total_soc))
+
+plot_data %>%
+  ggplot(aes(x = year, y = mean)) +
+  geom_line(aes(x = year, y = mean)) +
+  geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd), alpha = .2) + #fill = variable
+  theme_bw()
+
+```
+
+Load and process full study area data
+```{r}
+
+sim_data_full_sa <- read_csv(paste("sim_data/sim_data_", gcm, "_full_sa.csv", sep = ""), show_col_types = F) %>%
+  select(year, matches(lu_lab)) %>%
+  rename(DPM = 2, RPM = 3, BIO = 4, HUM = 5, IOM = 6) %>%
+  mutate(total_soc = DPM + RPM + BIO + HUM + IOM)
+
+
+sim_data_full_sa_yrly <- sim_data_full_sa %>%
+  mutate(year = floor(year)) %>%
+  group_by(year) %>%
+  summarize_all(mean)
+  
+```
+
+
+
+```{r}
+
+n_ranks <- 5
+
+# cell_ranks <- sim_data_comb_yrly_pivot %>%
+#   filter(year == 2098) %>%
+#   arrange(total_soc) %>%
+#   mutate(rank = rep(1:n_ranks, each = ceiling(n_cells/n_ranks))[1:n_cells] %>% as.character()) %>%
+#   select(cell_id, rank)
+
+cell_ranks <- sim_data_comb_yrly_pivot %>%
+  group_by(cell_id) %>%
+  summarize(total_soc = mean(total_soc)) %>%
+  arrange(total_soc) %>%
+  mutate(rank = rep(1:n_ranks, each = ceiling(n_cells/n_ranks))[1:n_cells] %>% as.character()) %>%
+  select(cell_id, rank)
+
+plot_data_by_rank <- sim_data_comb_yrly_pivot %>%
+  left_join(cell_ranks) %>%
+  group_by(year, rank) %>%
+  summarize(mean = mean(total_soc),
+            sd = sd(total_soc))
+
+plot_data_hi_lo <- sim_data_comb_yrly_pivot %>%
+  filter(cell_id %in% c(tail(cell_ranks, 1)$cell_id, head(cell_ranks, 1)$cell_id)) %>%
+  mutate(label = case_when(cell_id == tail(cell_ranks, 1)$cell_id ~ "Highest cell",
+                           cell_id == head(cell_ranks, 1)$cell_id ~ "Lowest cell")) %>%
+  select(!cell_id)
+
+plot_data_cell_mean <- sim_data_comb_yrly_pivot %>%
+  group_by(year) %>%
+  summarize(total_soc = mean(total_soc))
+
+plot_data_hi_lo_mean <- plot_data_cell_mean %>%
+  mutate(label = "Mean of cells") %>%
+  bind_rows(plot_data_hi_lo)
+
+plot_data_hi_lo_mean_full_sa <- sim_data_full_sa_yrly %>%
+  mutate(label = "Full study area") %>%
+  bind_rows(plot_data_hi_lo_mean)
+
+plot_data_hi_lo_mean_full_sa$label <- factor(plot_data_hi_lo_mean_full_sa$label, levels = c("Highest cell", "Full study area", "Mean of cells", "Lowest cell"))
+
+```
+
+
+
+```{r}
+
+ylims <- tibble("crops" = c(28, 115),
+                "hay" = c(32, 134),
+                "pasture" = c(32, 147))
+
+p <- plot_data_by_rank %>% 
+  ggplot(aes(x = year, y = mean)) +
+  geom_line(aes(color = rank)) +
+  geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd, fill = rank), alpha = .2) + #fill = variable
+  # geom_line(data = sim_data_full_sa_yrly, aes(x = year, y = total_soc)) +
+  # geom_line(data = plot_data_hi_lo, aes(x = year, y = total_soc, linetype = label)) +
+  # scale_linetype_manual(name = NULL, values = c("dashed", "dotdash")) +
+  geom_line(data = plot_data_hi_lo_mean_full_sa, aes(x = year, y = total_soc, linetype = label)) +
+  scale_linetype_manual(name = NULL, values = c("dashed", "solid", "longdash", "dotdash")) +
+  scale_color_discrete(name = "Quintile", guide = guide_legend(reverse = TRUE)) +
+  scale_fill_discrete(name = "Quintile", guide = guide_legend(reverse = TRUE)) +
+  labs(x = NULL, y = "SOC (t/Ha)") +
+  scale_x_continuous(limits = c(2020, 2100), breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = ylims[[lu_lab]], breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+  theme_bw()
+
+print(p)
+
+ggsave(paste("figs/comb_line_plots/", lu_lab, "/comb_line_", gcm, "_", lu_lab, ".png", sep = ""))
+
+```
+
+```{r}
+
+vert_bin_scaling <- .5
+
+heatmap_dat <- sim_data_comb_yrly_pivot %>%
+  count(year, total_soc = vert_bin_scaling*floor(total_soc / vert_bin_scaling)) %>%
+  complete(year, total_soc = vert_bin_scaling*ylims[[lu_lab]][1]:ylims[[lu_lab]][2], fill = list(n = 0)) %>%
+  group_by(year) %>%
+  mutate(share = n / max(n)) %>%  # weighted for num as % of max for that year
+  ungroup() %>%
+  na_if(0) %>%
+  na.omit()
+
+heatmap_dat %>%
+  ggplot(aes(x = year, y = total_soc, fill = share)) +
+  geom_tile(width = 1) +
+  scale_fill_viridis_c(name = "Share of runs", direction = -1, na.value = NA) +
+  scale_x_continuous(limits = c(2020, 2100), breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = ylims[[lu_lab]], breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+  theme_bw()
+
+
+```
+
+# Combined line and heatmap plot
+```{r}
+p <- ggplot() +
+  geom_tile(data = heatmap_dat, aes(x = year, y = total_soc, fill = share), width = 1, alpha = .8) +
+  scale_fill_viridis_c(name = "Share of runs", direction = -1, na.value = NA) +
+  geom_line(data = plot_data_hi_lo_mean_full_sa, aes(x = year, y = total_soc, linetype = label), size = .8, color = "black") +
+  scale_linetype_manual(name = NULL, values = c("dashed", "solid", "longdash", "dotdash")) +
+  labs(x = NULL, y = "SOC (t/Ha)") +
+  scale_x_continuous(limits = c(2020, 2100), breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = ylims[[lu_lab]], breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+  guides(linetype = guide_legend(keywidth = unit(1.5, 'cm'))) +
+  theme_bw()
+
+print(p)
+
+ggsave(paste("figs/dens_line_plots/", lu_lab, "/dens_line_", gcm, "_", lu_lab, ".png", sep = ""))
+saveRDS(p, file = paste("figs/dens_line_plots/", lu_lab, "/dens_line_", gcm, "_", lu_lab, ".rds", sep = ""))
+
+```
+
+
+
+# Panel plot
+```{r fig.height = 7, fig.width = 10}
+
+
+plot_ls <- list()
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    plot_ls[[gcm]][[lu_lab]] <- readRDS(file = paste("figs/dens_line_plots/", lu_lab, "/dens_line_", gcm, "_", lu_lab, ".rds", sep = ""))
+  }
+}
+
+# set global properties for all plots
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] +
+      theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+            plot.margin = unit(c(2,3,2,3), "mm"),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(color="gray80"))
+  }
+}
+
+# remove y axis titles and labels from 2nd-4th column
+for (gcm in gcms[2:4]) {
+  for (lu_lab in lu_labs) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] + 
+      theme(axis.text.y = element_blank(),
+            axis.title.y = element_blank()) #axis.ticks.y = element_blank(),
+  }
+}
+
+# remove x axis titles from 1st-2nd row
+for (gcm in gcms) {
+  for (lu_lab in lu_labs[1:2]) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] +
+      theme(axis.text.x = element_blank(),
+            axis.title.x = element_blank()) #axis.ticks.y = element_blank(),
+  }
+}
+
+# plot_ls[[gcms[2]]][[lu_labs[1]]]
+
+patchwork = 
+  (plot_ls[[gcms[1]]][[lu_labs[1]]] + theme(axis.title.y = element_blank())) +
+  (plot_ls[[gcms[2]]][[lu_labs[1]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[3]]][[lu_labs[1]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[4]]][[lu_labs[1]]] + guides(linetype = "none", fill = "none")) + 
+  (plot_ls[[gcms[1]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[2]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[3]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[4]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) + 
+  (plot_ls[[gcms[1]]][[lu_labs[3]]] + theme(axis.title.y = element_blank()) + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[2]]][[lu_labs[3]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[3]]][[lu_labs[3]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[4]]][[lu_labs[3]]] + guides(linetype = "none", fill = "none")) + 
+  plot_layout(ncol = 4, nrow = 3, widths = c(4, 4, 4, 4), guides = "collect") & theme(legend.position = 'bottom')
+
+
+patchwork
+
+# ggsave("figs/dens_line_plots/dens_line_panel.png", patchwork, width = 10, height = 7)
+ggsave("figs/dens_line_plots/dens_line_panel.pdf", patchwork, width = 10, height = 7)
+
+```
+
+# Make table with difference between aggregated and mean of cells, and variance
+
+```{r}
+
+table_data <- tibble()
+distrib_data <- tibble()
+
+for (lu_lab in lu_labs) {
+  print(lu_lab)
+  for (gcm in gcms) {
+    print(gcm)
+    load(paste("output_data/sim_data_comb_", gcm, "_", lu_lab, "_", n_cells, "_cells.Rdata", sep = "")) # load sim_data_comb
+
+    sim_data_comb_pivot <- sim_data_comb %>% pivot_longer(!year, names_to = "cell_id", values_to = "total_soc")
+    
+    sim_data_comb_yrly <- sim_data_comb %>%
+      mutate(year = floor(year)) %>%
+      group_by(year) %>%
+      summarize_all(mean)
+    
+    distrib_data_this <- sim_data_comb_yrly %>%
+      filter(year == 2098) %>%
+      select(!year) %>%
+      pivot_longer(cols = everything(), names_to = "cell_id", values_to = paste(gcm, lu_lab, sep = "_"))
+    
+    if (lu_lab == lu_labs[1] && gcm == gcms[[1]]) {
+      distrib_data <- distrib_data_this
+    } else {
+      distrib_data <- bind_cols(distrib_data, distrib_data_this %>% select(-cell_id))
+    }
+    
+    sim_data_comb_yrly_pivot <- sim_data_comb_yrly %>% pivot_longer(!year, names_to = "cell_id", values_to = "total_soc")
+    
+    plot_data_cell_mean <- sim_data_comb_yrly_pivot %>%
+      group_by(year) %>%
+      summarize(total_soc = mean(total_soc))
+    
+    plot_data_hi_lo <- sim_data_comb_yrly_pivot %>%
+      filter(cell_id %in% c(tail(cell_ranks, 1)$cell_id, head(cell_ranks, 1)$cell_id)) %>%
+      mutate(label = case_when(cell_id == tail(cell_ranks, 1)$cell_id ~ "Highest cell",
+                               cell_id == head(cell_ranks, 1)$cell_id ~ "Lowest cell")) %>%
+      select(!cell_id)
+    
+    plot_data_hi_lo_mean <- plot_data_cell_mean %>%
+      mutate(label = "Mean of cells") %>%
+      bind_rows(plot_data_hi_lo)
+    
+    sim_data_full_sa <- read_csv(paste("sim_data/sim_data_", gcm, "_full_sa.csv", sep = ""), show_col_types = F) %>%
+      select(year, matches(lu_lab)) %>%
+      rename(DPM = 2, RPM = 3, BIO = 4, HUM = 5, IOM = 6) %>%
+      mutate(total_soc = DPM + RPM + BIO + HUM + IOM)
+    
+    sim_data_full_sa_yrly <- sim_data_full_sa %>%
+      mutate(year = floor(year)) %>%
+      group_by(year) %>%
+      summarize_all(mean)
+    
+    plot_data_hi_lo_mean_full_sa <- sim_data_full_sa_yrly %>%
+      mutate(label = "Full study area") %>%
+      bind_rows(plot_data_hi_lo_mean)
+    
+    plot_data_hi_lo_mean_full_sa$label <- factor(plot_data_hi_lo_mean_full_sa$label, levels = c("Highest cell", "Full study area", "Mean of cells", "Lowest cell"))
+    
+    table_data_this <- plot_data_hi_lo_mean_full_sa %>%
+      filter(year == 2098) %>%
+      select(total_soc, label) %>%
+      mutate(gcm = gcm, lu_lab = lu_lab)
+    
+    table_data <- bind_rows(table_data_this, table_data)
+  }
+}
+
+saveRDS(distrib_data, file = "output_data/distrib_data.rds")
+
+saveRDS(table_data, file = "output_data/table_data.rds")
+
+table_data_wide <- table_data %>%
+  pivot_wider(names_from = label, values_from = total_soc) %>%
+  arrange(-row_number()) %>%
+  # relocate(lu_lab) %>%
+  mutate(`Mean of cells difference` = abs(`Mean of cells` - `Full study area`),
+         `Lowest cell difference` = abs(`Lowest cell` - `Full study area`),
+         `Highest cell difference` = abs(`Highest cell` - `Full study area`)) %>%
+  mutate(lu_lab = sub("(.)", "\\U\\1", lu_lab, perl=TRUE)) %>% # capitalize first letter
+  mutate(across(where(is.numeric), round, 2)) %>%
+  select(lu_lab, gcm, `Full study area`, `Mean of cells`, `Mean of cells difference`, `Lowest cell`, `Lowest cell difference`, `Highest cell`, `Highest cell difference`) %>% # reorder columns
+  rename(`GCM` = gcm, `Land Use` = lu_lab, `Full study area SOC` = `Full study area`)
+
+write_csv(table_data_wide, file = "output_data/mean_hi_lo_table.csv")
+
+```
+
+
+Make distribution plots
+```{r fig.height = 10, fig.width = 10}
+
+ylims <- tibble("crops" = c(29, 109),
+                "hay" = c(33, 126),
+                "pasture" = c(34, 137))
+
+
+distrib_data <- readRDS(file = "output_data/distrib_data.rds")
+
+plot_ls <- list()
+
+for (lu_lab in lu_labs) {
+  min <- 100
+  max <-  0
+  for (gcm in gcms) {
+    
+    distrib_data_this <- distrib_data %>%
+      select(paste(gcm, lu_lab, sep = "_")) %>%
+      rename(total_soc = paste(gcm, lu_lab, sep = "_"))
+    
+    min <- min(min, min(distrib_data_this$total_soc))
+    max <- max(max, max(distrib_data_this$total_soc))
+
+    # print(paste(lu_lab, min(distrib_data_this$total_soc), max(distrib_data_this$total_soc)))
+    
+    # Histogram overlaid with kernel density curve
+    p <- distrib_data_this %>%
+      ggplot(aes(y = total_soc)) + 
+      geom_histogram(aes(x = ..density..), # Histogram with density instead of count on y-axis
+                     binwidth = 2,
+                     color = "black", fill = "#add8e6", alpha = .7, size = .1) +
+      # geom_density(alpha=.2, fill = "blue", color = NA, size = .15) + # Overlay with transparent density plot
+      scale_x_continuous(limits = c(0, .075), breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+      scale_y_continuous(limits = ylims[[lu_lab]], breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+      labs(x = "", y = "SOC (t/Ha)") +
+      theme_bw()
+      
+    print(p)
+    
+    plot_ls[[gcm]][[lu_lab]] <- p
+    
+  }
+  print(paste(lu_lab, min, max))
+}
+
+# set global properties for all plots
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] +
+      theme(plot.margin = unit(c(1, 1, 1, 1), "mm"),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(color="gray80"))
+  }
+}
+
+# remove y axis titles from 2nd-4th column
+for (gcm in gcms[2:4]) {
+  for (lu_lab in lu_labs) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] +
+      theme(axis.text.y = element_blank(),
+            axis.title.y = element_blank()) #axis.ticks.y = element_blank(),
+  }
+}
+
+# remove x axis titles from 1st-2nd row
+for (gcm in gcms) {
+  for (lu_lab in lu_labs[1:2]) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] +
+      theme(axis.text.x = element_blank(),
+            axis.title.x = element_blank()) #axis.ticks.y = element_blank(),
+  }
+}
+
+# remove x axis titles from all but 4th column
+plot_ls[[4]][[3]] <- plot_ls[[4]][[3]] +
+  xlab("Density")
+
+# plot_ls[[gcms[2]]][[lu_labs[1]]]
+
+patchwork = 
+  plot_ls[[gcms[1]]][[lu_labs[1]]] + theme(axis.title.y = element_blank()) +
+  plot_ls[[gcms[2]]][[lu_labs[1]]] + 
+  plot_ls[[gcms[3]]][[lu_labs[1]]] + 
+  plot_ls[[gcms[4]]][[lu_labs[1]]] + 
+  plot_ls[[gcms[1]]][[lu_labs[2]]] + 
+  plot_ls[[gcms[2]]][[lu_labs[2]]] + 
+  plot_ls[[gcms[3]]][[lu_labs[2]]] + 
+  plot_ls[[gcms[4]]][[lu_labs[2]]] + 
+  plot_ls[[gcms[1]]][[lu_labs[3]]] + theme(axis.title.y = element_blank()) +
+  plot_ls[[gcms[2]]][[lu_labs[3]]] + 
+  plot_ls[[gcms[3]]][[lu_labs[3]]] + 
+  plot_ls[[gcms[4]]][[lu_labs[3]]] + 
+  plot_layout(ncol = 4, nrow = 3, widths = c(4, 4, 4, 4), guides = "collect") & theme(legend.position = 'bottom')
+
+
+patchwork
+
+# ggsave("figs/dens_line_plots/dens_line_panel.png", patchwork, width = 10, height = 7)
+ggsave("figs/hist_panel.pdf", patchwork, width = 10, height = 7)
+
+
+```
+
+# Gather monthly data for all gcms and land uses
+```{r}
+plot_data_ls <- list()
+
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    load(paste("output_data/sim_data_comb_", gcm, "_", lu_lab, "_", n_cells, "_cells.Rdata", sep = ""))
+    sim_data_comb_pivot <- sim_data_comb %>% pivot_longer(!year, names_to = "cell_id", values_to = "total_soc")
+    plot_data_ls[[gcm]][[lu_lab]] <- sim_data_comb_pivot %>%
+      group_by(year) %>%
+      summarize(mean = mean(total_soc),
+                sd = sd(total_soc))
+  }
+}
+
+```
+
+
+# Make monthly plots for all gcms and land uses and make patchwork
+```{r fig.height = 7, fig.width = 10}
+
+ylims <- tibble("crops" = c(53, 92),
+                "hay" = c(65, 108),
+                "pasture" = c(71, 117))
+
+plot_ls <- list()
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_data_ls[[gcm]][[lu_lab]] %>%
+      ggplot(aes(x = year, y = mean)) +
+      geom_line(aes(x = year, y = mean)) +
+      geom_ribbon(aes(ymin = mean - sd, ymax = mean + sd), alpha = .2) + 
+      labs(x = NULL, y = "SOC (t/Ha)") +
+      scale_x_continuous(limits = c(2020, 2100), breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+      scale_y_continuous(limits = ylims[[lu_lab]], breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+            plot.margin = unit(c(2,3,2,3), "mm"),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(color="gray80"))
+  }
+}
+
+
+# remove y axis titles and labels from 2nd-4th column
+for (gcm in gcms[2:4]) {
+  for (lu_lab in lu_labs) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] + 
+      theme(axis.text.y = element_blank(),
+            axis.title.y = element_blank()) #axis.ticks.y = element_blank(),
+  }
+}
+
+# remove x axis titles from 1st-2nd row
+for (gcm in gcms) {
+  for (lu_lab in lu_labs[1:2]) {
+    plot_ls[[gcm]][[lu_lab]] <- plot_ls[[gcm]][[lu_lab]] +
+      theme(axis.text.x = element_blank(),
+            axis.title.x = element_blank()) #axis.ticks.y = element_blank(),
+  }
+}
+
+patchwork = 
+  (plot_ls[[gcms[1]]][[lu_labs[1]]] + theme(axis.title.y = element_blank())) +
+  (plot_ls[[gcms[2]]][[lu_labs[1]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[3]]][[lu_labs[1]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[4]]][[lu_labs[1]]] + guides(linetype = "none", fill = "none")) + 
+  (plot_ls[[gcms[1]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[2]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[3]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[4]]][[lu_labs[2]]] + guides(linetype = "none", fill = "none")) + 
+  (plot_ls[[gcms[1]]][[lu_labs[3]]] + theme(axis.title.y = element_blank()) + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[2]]][[lu_labs[3]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[3]]][[lu_labs[3]]] + guides(linetype = "none", fill = "none")) +
+  (plot_ls[[gcms[4]]][[lu_labs[3]]] + guides(linetype = "none", fill = "none")) + 
+  plot_layout(ncol = 4, nrow = 3, widths = c(4, 4, 4, 4), guides = "collect") & theme(legend.position = 'bottom')
+
+
+patchwork
+
+ggsave("figs/mean_sd_monthly_panel.pdf", patchwork, width = 10, height = 7)
+
+
+```
+
