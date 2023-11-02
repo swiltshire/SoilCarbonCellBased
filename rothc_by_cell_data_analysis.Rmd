@@ -435,6 +435,17 @@ for (lu_lab in lu_labs) {
     distrib_data_this <- distrib_data %>%
       select(paste(gcm, lu_lab, sep = "_")) %>%
       rename(total_soc = paste(gcm, lu_lab, sep = "_"))
+        
+    cell_avg_soc <- mean(distrib_data_this$total_soc)
+    
+    full_sa_soc <- read_csv(paste("sim_data/sim_data_", gcm, "_full_sa.csv", sep = ""), show_col_types = F) %>%
+      select(year, matches(lu_lab)) %>%
+      rename(DPM = 2, RPM = 3, BIO = 4, HUM = 5, IOM = 6) %>%
+      mutate(total_soc = DPM + RPM + BIO + HUM + IOM) %>%
+      slice_tail(n = 12) %>%
+      select(total_soc) %>%
+      unlist() %>%
+      mean()
     
     min <- min(min, min(distrib_data_this$total_soc))
     max <- max(max, max(distrib_data_this$total_soc))
@@ -447,6 +458,8 @@ for (lu_lab in lu_labs) {
       geom_histogram(aes(x = ..density..), # Histogram with density instead of count on y-axis
                      binwidth = 2,
                      color = "black", fill = "#add8e6", alpha = .7, size = .1) +
+      geom_hline(yintercept = full_sa_soc, color = "#AA4A44", linetype = "dashed") +
+      geom_hline(yintercept = cell_avg_soc, color = "black", linetype = "solid") +
       # geom_density(alpha=.2, fill = "blue", color = NA, size = .15) + # Overlay with transparent density plot
       scale_x_continuous(limits = c(0, .075), breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
       scale_y_continuous(limits = ylims[[lu_lab]], breaks = pretty_breaks(5), expand = expansion(mult = c(0, 0))) +
@@ -600,6 +613,71 @@ patchwork =
 patchwork
 
 ggsave("figs/mean_sd_monthly_panel.pdf", patchwork, width = 10, height = 7)
+
+
+```
+
+
+Gather data for GIS visuals
+```{r}
+
+distrib_data <- readRDS(file = "output_data/distrib_data.rds")
+
+avg_by_cell_2099 <- distrib_data %>%
+  rowwise() %>%
+  mutate(`mean_ccsm4` = mean(c(`ccsm4_crops`, `ccsm4_hay`, `ccsm4_pasture`)),
+         `mean_miroc-esm` = mean(c(`miroc-esm_crops`, `miroc-esm_hay`, `miroc-esm_pasture`)),
+         `mean_noresm1-m` = mean(c(`noresm1-m_crops`, `noresm1-m_hay`, `noresm1-m_pasture`)),
+         `mean_mri-cgcm3` = mean(c(`mri-cgcm3_crops`, `mri-cgcm3_hay`, `mri-cgcm3_pasture`)),
+         `mean_crops` = mean(c(`ccsm4_crops`, `miroc-esm_crops`, `noresm1-m_crops`, `mri-cgcm3_crops`)),
+         `mean_hay` = mean(c(`ccsm4_hay`, `miroc-esm_hay`, `noresm1-m_hay`, `mri-cgcm3_hay`)),
+         `mean_pasture` = mean(c(`ccsm4_pasture`, `miroc-esm_pasture`, `noresm1-m_pasture`, `mri-cgcm3_pasture`)),
+         `mean_all` = mean(c(mean_crops, mean_hay, mean_pasture)))
+write_csv(avg_by_cell_2099, "output_data/avg_soc_by_cell_2099.csv")
+
+
+
+
+```
+
+2022 soc average by cell
+```{r}
+
+distrib_data_2022 <- tibble()
+
+for (lu_lab in lu_labs) {
+  print(lu_lab)
+  for (gcm in gcms) {
+    print(gcm)
+    load(paste("output_data/sim_data_comb_", gcm, "_", lu_lab, "_", n_cells, "_cells.Rdata", sep = "")) # load sim_data_comb
+
+    distrib_data_this <- sim_data_comb %>%
+      filter(year < 2023) %>%
+      select(-year) %>%
+      summarize_all(mean) %>%
+      pivot_longer(everything(), names_to = "cell_id", values_to = paste(gcm, lu_lab, sep = "_"))
+
+    if (lu_lab == lu_labs[1] && gcm == gcms[[1]]) {
+      distrib_data_2022 <- distrib_data_this
+    } else {
+      distrib_data_2022 <- bind_cols(distrib_data_2022, distrib_data_this %>% select(-cell_id))
+    }
+  }
+}
+
+
+avg_by_cell_2022 <- distrib_data_2022 %>%
+  rowwise() %>%
+  mutate(`mean_ccsm4` = mean(c(`ccsm4_crops`, `ccsm4_hay`, `ccsm4_pasture`)),
+         `mean_miroc-esm` = mean(c(`miroc-esm_crops`, `miroc-esm_hay`, `miroc-esm_pasture`)),
+         `mean_noresm1-m` = mean(c(`noresm1-m_crops`, `noresm1-m_hay`, `noresm1-m_pasture`)),
+         `mean_mri-cgcm3` = mean(c(`mri-cgcm3_crops`, `mri-cgcm3_hay`, `mri-cgcm3_pasture`)),
+         `mean_crops` = mean(c(`ccsm4_crops`, `miroc-esm_crops`, `noresm1-m_crops`, `mri-cgcm3_crops`)),
+         `mean_hay` = mean(c(`ccsm4_hay`, `miroc-esm_hay`, `noresm1-m_hay`, `mri-cgcm3_hay`)),
+         `mean_pasture` = mean(c(`ccsm4_pasture`, `miroc-esm_pasture`, `noresm1-m_pasture`, `mri-cgcm3_pasture`)),
+         `mean_all` = mean(c(mean_crops, mean_hay, mean_pasture)))
+write_csv(avg_by_cell_2022, "output_data/avg_soc_by_cell_2022.csv")
+
 
 
 ```

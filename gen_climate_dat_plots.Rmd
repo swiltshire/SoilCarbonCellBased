@@ -1,0 +1,159 @@
+---
+title: "Generate climate data plots"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+
+library(tidyverse)
+library(matrixStats)
+library(zoo)
+library(readxl)
+library(scales)
+library(patchwork)
+
+```
+
+
+Load data
+```{r}
+
+ccsm4_sa_avg <- read_csv("input_data/in_data/gcm_in_data_full_sa_avg/ccsm4_1950-2099_sa_avg.csv") %>%
+  rowwise() %>%
+  mutate(Tavg = mean(c(Tmin, Tmax)))
+miroc_esm_sa_avg <- read_csv("input_data/in_data/gcm_in_data_full_sa_avg/miroc-esm_1950-2099_sa_avg.csv") %>%
+  rowwise() %>%
+  mutate(Tavg = mean(c(Tmin, Tmax)))
+mri_cgcm3_sa_avg <- read_csv("input_data/in_data/gcm_in_data_full_sa_avg/mri-cgcm3_1950-2099_sa_avg.csv") %>%
+  rowwise() %>%
+  mutate(Tavg = mean(c(Tmin, Tmax)))
+noresm1_m_sa_avg <- read_csv("input_data/in_data/gcm_in_data_full_sa_avg/noresm1-m_1950-2099_sa_avg.csv") %>%
+  rowwise() %>%
+  mutate(Tavg = mean(c(Tmin, Tmax)))
+
+
+```
+
+Process data
+```{r}
+
+precip_comb <- tibble(ccsm4 = ccsm4_sa_avg$P,
+                         miroc_esm = miroc_esm_sa_avg$P,
+                         mri_cgcm3 = mri_cgcm3_sa_avg$P,
+                         noresm1_m = noresm1_m_sa_avg$P
+)
+
+temp_comb <- tibble(ccsm4 = ccsm4_sa_avg$Tavg,
+                       miroc_esm = miroc_esm_sa_avg$Tavg,
+                       mri_cgcm3 = mri_cgcm3_sa_avg$Tavg,
+                       noresm1_m = noresm1_m_sa_avg$Tavg
+)
+
+win_size_mos <- 120
+years <- rollmean(head(seq(1950, 2099, by = 1/12), -1), win_size_mos)
+
+precip_comb_smooth <- tibble(
+  "Year" = years,
+  "ccsm4" = rollmean(precip_comb$ccsm4, win_size_mos),
+  "miroc_esm" = rollmean(precip_comb$miroc_esm, win_size_mos),
+  "mri_cgcm3" = rollmean(precip_comb$mri_cgcm3, win_size_mos),
+  "noresm1_m" = rollmean(precip_comb$noresm1_m, win_size_mos))
+
+temp_comb_smooth <- tibble(
+  "Year" = years,
+  "ccsm4" = rollmean(temp_comb$ccsm4, win_size_mos),
+  "miroc_esm" = rollmean(temp_comb$miroc_esm, win_size_mos),
+  "mri_cgcm3" = rollmean(temp_comb$mri_cgcm3, win_size_mos),
+  "noresm1_m" = rollmean(temp_comb$noresm1_m, win_size_mos))
+  
+
+precip_mean_sd <- precip_comb_smooth %>%
+  rowwise() %>%
+  mutate(mean = mean(c(ccsm4, miroc_esm, mri_cgcm3, noresm1_m)),
+         sd = sd(c(ccsm4, miroc_esm, mri_cgcm3, noresm1_m))) %>%
+  select(Year, mean, sd)
+
+precip_mean_sd <- precip_mean_sd %>% # daily (mm) to yearly (cm) precip
+  mutate(mean = mean * 365 / 10,
+         sd = sd * 365 / 10)
+
+temp_mean_sd <- temp_comb_smooth %>%
+  rowwise() %>%
+  mutate(mean = mean(c(ccsm4, miroc_esm, mri_cgcm3, noresm1_m)),
+         sd = sd(c(ccsm4, miroc_esm, mri_cgcm3, noresm1_m))) %>%
+  select(Year, mean, sd)
+  
+
+
+  
+  
+
+```
+
+
+Make plots
+```{r}
+
+p1 <- precip_mean_sd %>%
+  ggplot(aes(x = Year, y = mean)) +
+  geom_ribbon(aes(y = mean, ymin = mean - sd, ymax = mean + sd), color = NA, alpha = .2, show.legend = F) +
+  geom_line() +
+  geom_vline(xintercept = 2022, color = "darkred", linewidth = .6, linetype = "longdash") +
+  labs(x = "Year", y = "Annual precipitation (cm)") +
+  scale_x_continuous(limits = c(NA, NA), expand = expansion(mult = c(0, 0)), breaks = pretty_breaks(10)) +
+  scale_y_continuous(expand = expansion(mult = c(.01, .01)), breaks = pretty_breaks(5)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11),
+        axis.text.y = element_text(size = 11),
+        panel.grid.minor = element_blank(),
+        plot.margin = unit(c(.5,.5,.5,.5), "cm")) 
+
+print(p1)
+
+ggsave("output_figs/sa_precip_line.png", width = 7, height = 5)
+ggsave("output_figs/sa_precip_line.pdf", device = cairo_pdf, width = 7, height = 5)
+
+
+
+p2 <- temp_mean_sd %>%
+  ggplot(aes(x = Year, y = mean)) +
+  geom_ribbon(aes(y = mean, ymin = mean - sd, ymax = mean + sd), color = NA, alpha = .2, show.legend = F) +
+  geom_line() +
+  geom_vline(xintercept = 2022, color = "darkred", linewidth = .6, linetype = "longdash") +
+  labs(x = "Year", y = "Temperature (°C)") +
+  scale_x_continuous(limits = c(NA, NA), expand = expansion(mult = c(0, 0)), breaks = pretty_breaks(10)) +
+  scale_y_continuous(expand = expansion(mult = c(.01, .01)), breaks = pretty_breaks(5)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 11),
+        axis.text.y = element_text(size = 11),
+        panel.grid.minor = element_blank(),
+        plot.margin = unit(c(.5,.5,.5,.5), "cm")) 
+
+print(p2)
+
+ggsave("output_figs/sa_temp_line.png", width = 7, height = 5)
+ggsave("output_figs/sa_temp_line.pdf", device = cairo_pdf, width = 7, height = 5)
+
+
+```
+
+
+Panel plot
+```{r fig.height = 7, fig.width = 7}
+
+patchwork = 
+  (p2 + theme(plot.margin = unit(c(.5,.5,.25,.5), "cm"))) +
+  (p1 + theme(plot.margin = unit(c(.5,.5,.5,.25), "cm"))) +
+  plot_layout(ncol = 1, nrow = 2, guides = "collect")
+
+patchwork
+
+ggsave("output_figs/sa_temp_precip_line.png", width = 7, height = 7)
+ggsave("output_figs/sa_temp_precip_line.pdf", device = cairo_pdf, width = 7, height = 7)
+
+```
+

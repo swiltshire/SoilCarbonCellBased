@@ -467,3 +467,69 @@ for (lu_lab in params_ls$lu_labs) {
 
 ```
 
+
+
+Plot with avg and sd temp
+```{r}
+
+
+win_size_mos <- 120
+
+comb_tmp_plt_dat <- tibble()
+
+for (er_code in params_ls$er_codes) {
+  
+  tmp_plt_dat <- tibble("Year" = rollmean(head(seq(1950, 2099, by = 1/12), -1), win_size_mos))
+  
+  for (gcm in params_ls$gcms) {
+    tmp_plt_dat[gcm] <- rollmean(gcm_dat_ls[[er_code]][[gcm]]$Tavg, win_size_mos)
+    
+    # sanity check historic averages
+    print(paste(gcm, "historical avg. temp 1950-2022 =", mean(head(gcm_dat_ls[[er_code]][[gcm]]$Tavg, 72*12))))
+
+  }
+  
+    comb_tmp_plt_dat <- bind_rows(comb_tmp_plt_dat,
+                                tmp_plt_dat %>%
+                                  mutate(er_code = er_code))
+  
+  p <- tmp_plt_dat %>%
+    pivot_longer(cols = -"Year", names_to = "GCM", values_to = "Temperature") %>%
+    ggplot(aes(x = Year, y = Temperature, color = GCM)) +
+    geom_line() +
+    theme_minimal()
+
+  print(p)
+
+}
+
+
+comb_tmp_plt_dat <- comb_tmp_plt_dat %>%
+  group_by(Year) %>%
+  summarise_if(is.numeric, mean) %>%
+  mutate(mean = rowMeans(select(., -Year)), sd = rowSds(as.matrix(select(., -Year)))) %>%
+  select(c(Year, mean, sd)) 
+
+
+p <- comb_tmp_plt_dat %>%
+  ggplot(aes(x = Year, y = mean)) +
+  geom_ribbon(aes(y = mean, ymin = mean - sd, ymax = mean + sd), color = NA, alpha = .2, show.legend = F) +
+  geom_line() +
+  geom_vline(xintercept = params_ls$t0_yr, color = "darkred", size = .6, linetype = "longdash") +
+  labs(x = "Year", y = "Temperature (°C)") +
+  scale_x_continuous(limits = c(NA, NA), expand = expansion(mult = c(.01, 0)), breaks = pretty_breaks(10)) +
+  scale_y_continuous(expand = expansion(mult = c(.01, .01)), breaks = pretty_breaks(5)) +
+  # ggtitle("Mean Vermont temperature from EPSCoR GCM data") +
+  theme_ipsum_rc() +
+  theme(plot.title = element_text(size = 12),
+        legend.position = "right",
+        panel.grid.minor = element_blank(),
+        plot.margin = unit(c(.5,.5,.5,.5), "cm")) 
+
+print(p)
+
+ggsave("output_figs/vt_temp_line.png", width = 7, height = 5)
+ggsave("output_figs/vt_temp_line.pdf", device = cairo_pdf, width = 7, height = 5)
+
+
+```
