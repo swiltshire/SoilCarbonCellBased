@@ -1,0 +1,138 @@
+---
+title: "SOC changes over time"
+output: html_notebook
+---
+
+```{r}
+
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+
+library(tidyverse)
+library(readxl)
+library(scales)
+library(patchwork)
+
+lu_labs <- c("crops", "hay", "pasture")
+gcms <- c("ccsm4", "miroc-esm", "noresm1-m", "mri-cgcm3")
+
+```
+
+
+```{r}
+
+cells_init_dat <- read.csv("output_data/avg_soc_by_cell_2022.csv")
+cells_final_dat <- read.csv("output_data/avg_soc_by_cell_2099.csv")
+
+cells_diff_dat <- (cells_final_dat - cells_init_dat) %>% select(-cell_id)
+
+cells_diff_maxs <- cells_diff_dat %>%
+  summarise_all(min)
+
+cells_diff_mins <- cells_diff_dat %>%
+  summarise_all(max)
+
+cells_diff_avgs <- cells_diff_dat %>%
+  summarise_all(mean)
+
+
+cells_pct_dat <- 100 * cells_diff_dat / cells_init_dat %>% select(-cell_id)
+
+cells_pct_maxs <- cells_pct_dat %>%
+  summarise_all(min)
+
+cells_pct_mins <- cells_pct_dat %>%
+  summarise_all(max)
+
+cells_pct_avgs <- cells_pct_dat %>%
+  summarise_all(mean)
+
+cells_tib <- tibble(id = names(cells_diff_dat),
+                    cells_diff_avg = unname(unlist(cells_diff_avgs[1,])),
+                    cells_pct_avg = unname(unlist(cells_pct_avgs[1,])),
+                    cells_diff_min = unname(unlist(cells_diff_mins[1,])),
+                    cells_pct_min = unname(unlist(cells_pct_mins[1,])),
+                    cells_diff_max = unname(unlist(cells_diff_maxs[1,])),
+                    cells_pct_max = unname(unlist(cells_pct_maxs[1,])))
+
+```
+
+
+
+
+
+```{r}
+
+full_sa_ls <- list()
+
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    sim_data_full_sa <- read_csv(paste("sim_data/sim_data_", gcm, "_full_sa.csv", sep = ""), show_col_types = F) %>%
+      select(year, matches(lu_lab)) %>%
+      rename(DPM = 2, RPM = 3, BIO = 4, HUM = 5, IOM = 6) %>%
+      mutate(total_soc = DPM + RPM + BIO + HUM + IOM)
+    
+    
+    sim_data_full_sa_yrly <- sim_data_full_sa %>%
+      mutate(year = floor(year)) %>%
+      group_by(year) %>%
+      summarize_all(mean)
+    
+    full_sa_ls[[gcm]][[lu_lab]][["init"]] <- sim_data_full_sa_yrly %>% filter(year == 2022) %>% pull(total_soc)
+    full_sa_ls[[gcm]][[lu_lab]][["final"]] <- sim_data_full_sa_yrly %>% filter(year == 2098) %>% pull(total_soc)
+    full_sa_ls[[gcm]][[lu_lab]][["diff"]] <- full_sa_ls[[gcm]][[lu_lab]][["final"]] - full_sa_ls[[gcm]][[lu_lab]][["init"]]
+    full_sa_ls[[gcm]][[lu_lab]][["pct"]] <- 100 * full_sa_ls[[gcm]][[lu_lab]][["diff"]] / full_sa_ls[[gcm]][[lu_lab]][["init"]]
+    
+  }
+}
+
+full_sa_tib <- tibble("gcm" = character(), "land_use" = character(), "full_sa_diff" = numeric(), "full_sa_pct" = numeric())
+
+for (lu_lab in lu_labs) {
+  for (gcm in gcms) {
+    full_sa_tib <- full_sa_tib %>% add_row(gcm = gcm, 
+                                           land_use = lu_lab, 
+                                           full_sa_diff = full_sa_ls[[gcm]][[lu_lab]][["diff"]],
+                                           full_sa_pct = full_sa_ls[[gcm]][[lu_lab]][["pct"]])
+  }
+}
+
+
+full_sa_tib_w_avgs <- full_sa_tib
+
+for (this_gcm in gcms) {
+  full_sa_gcm_avgs <- full_sa_tib %>% filter(gcm == this_gcm) %>% summarise_if(is.numeric, mean)
+  full_sa_tib_w_avgs <- full_sa_tib_w_avgs %>% add_row(gcm = this_gcm, 
+                                                       land_use = "mean", 
+                                                       full_sa_diff = full_sa_gcm_avgs$full_sa_diff,
+                                                       full_sa_pct = full_sa_gcm_avgs$full_sa_pct)
+}
+
+
+for (lu_lab in lu_labs) {
+  full_sa_lu_lab_avgs <- full_sa_tib %>% filter(land_use == lu_lab) %>% summarise_if(is.numeric, mean)
+  full_sa_tib_w_avgs <- full_sa_tib_w_avgs %>% add_row(gcm = "mean", 
+                                                       land_use = lu_lab, 
+                                                       full_sa_diff = full_sa_lu_lab_avgs$full_sa_diff,
+                                                       full_sa_pct = full_sa_lu_lab_avgs$full_sa_pct)
+}
+
+full_sa_overall_avgs <- full_sa_tib %>% summarise_if(is.numeric, mean)
+full_sa_tib_w_avgs <- full_sa_tib_w_avgs %>% add_row(gcm = "mean", 
+                                                     land_use = "mean", 
+                                                     full_sa_diff = full_sa_overall_avgs$full_sa_diff,
+                                                     full_sa_pct = full_sa_overall_avgs$full_sa_pct)
+
+
+```
+
+
+```{r}
+
+comb_diff_pct_tib <- cbind(full_sa_tib_w_avgs, cells_tib %>% select(-id))
+
+write_csv(comb_diff_pct_tib, file = "output_data/diff_and_pct_change_init_to_final.csv")
+
+
+```
+
